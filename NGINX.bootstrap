@@ -1,0 +1,125 @@
+#!/bin/bash
+CentOS_version="7"
+VERSION_NG="1.8.0"
+NETWORK="192.168.200.0"
+NETMASK="255.255.255.0"
+IPADDR="192.168.200.6"
+VBOXIP="192.168.56.6"
+APACHE_LIST="192.168.200.2 92.168.200.5"
+servernamelist="$IPADDR $VBOXIP domain.example.com"
+
+## Configuring network interfaces ##
+
+sudo cat > /etc/sysconfig/network-scripts/ifcfg-enp0s9 << EOF
+TYPE="Ethernet"
+BOOTPROTO="none"
+NAME="enp0s9"
+DEVICE="enp0s9"
+ONBOOT="yes"
+DNS1=8.8.8.8
+DNS2=4.4.8.8
+DEFROUTE="yes"
+EOF 
+sudo echo "NETWORK=$NETWORK" >> /etc/sysconfig/network-scripts/ifcfg-enp0s9
+sudo echo "NETMASK=$NETMASK" >> /etc/sysconfig/network-scripts/ifcfg-enp0s9
+sudo echo "IPADDR=$IPADDR" >> /etc/sysconfig/network-scripts/ifcfg-enp0s9
+sudo echo "UUID=\"$(uuidgen)\"" >> /etc/sysconfig/network-scripts/ifcfg-enp0s9
+
+sudo cat > /etc/sysconfig/network-scripts/ifcfg-enp0s8 << EOF
+TYPE="Ethernet"
+BOOTPROTO="none"
+NAME="enp0s8"
+DEVICE="enp0s8"
+ONBOOT="yes"
+NETWORK=192.168.56.0
+NETMASK=255.255.255.0
+EOF
+sudo echo "IPADDR=$VBOXIP" >> /etc/sysconfig/network-scripts/ifcfg-enp0s8
+sudo echo "UUID=\"$(uuidgen)\"" >> /etc/sysconfig/network-scripts/ifcfg-enp0s8
+
+sudo systemctl restart network
+
+## Preparing needing tools for further steps ##
+
+sudo yum -y install vim net-tools nmap rpmdevtools gcc make yum-utils tar wget
+
+## Compiling NGINX rpm packege under new user ##
+
+sudo useradd -m rpmbuild
+sudo -u rpmbuild rpmdev-setuptree
+sudo -u rpmbuild cd ~/rpmbuild/SRPMS/
+sudo -u rpmbuild wget -nd -r -l 1 -A "nginx-$VERSION_NG*src.rpm"  http://nginx.org/packages/centos/$CentOS_version/SRPMS/ 2>/dev/null
+sudo -u rpmbuild yum-builddep $(ls | grep "nginx-$VERSION_NG*src.rpm")
+sudo -u rpmbuild cd ~/rpmbuild/SOURCES/
+sudo -u rpmbuild git clone https://github.com/yaoweibin/ngx_http_substitutions_filter_module.git
+sudo -u rpmbuild cd ../SPECS
+sudo -u rpmbuild sed -i "s|\\(--group=%{nginx_group}.*\\\\\)|\\1\\n\\t--with-http_sub_module \\\\\n\\t--add-module=$(pwd)/ngx_http_substitutions_filter_module \\\|g" nginx.spec
+sudo -u rpmbuild sed -i 's/Release.*$/Release: 200%{?dist}.with_http_substitution_filter_module/' nginx.spec
+
+sudo -u rpmbuild rpmbuild -bb nginx.spec
+cd /home/rpmbuild/rpmbuild/RPMS/$(uname -i)
+
+## Installation of the newly compilled packege
+
+sudo rpm ivh nginx-$VERSION_NG*$(uname -i).rpm
+
+## Configuring frontend on nginx
+sudo cat > /etc/nginx/conf.d/frontend.conf << EOF
+upstream backend_hosts {
+    hash $remote_addr$remote_port consistent;
+EOF
+for ip in $APACHE_LIST; 
+do
+    sudo echo "    server $ip;" >> /etc/nginx/conf.d/frontend.conf
+done
+sudo cat > /etc/nginx/conf.d/frontend.conf << EOF
+}
+
+proxy_cache_key "$scheme$request_method$host$request_uri$is_args$args";
+proxy_cache_path  /var/cache/nginx/cache  levels=1:2    keys_zone=STATIC:10m  inactive=24h  max_size=200m;
+
+server {
+    listen       80;
+EOF
+sudo echo "server_name  $servernamelist;" >> /etc/nginx/conf.d/frontend.conf
+sudo cat > /etc/nginx/conf.d/frontend.conf << EOF
+    access_log  /var/log/nginx/frontend/host.access.log  main;
+    error_log  /var/log/nginx/frontend/error.log debug;
+    location / {
+        proxy_pass $scheme://backend_hosts;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_connect_timeout 120;
+        proxy_send_timeout 120;
+        proxy_read_timeout 180;
+        proxy_cache STATIC;
+        proxy_cache_bypass $http_cache_control;
+        add_header X-Proxy-Cache $upstream_cache_status;
+        proxy_cache_valid  200 302 1d;
+        proxy_cache_valid  404 1m;
+
+        proxy_cache_use_stale  error timeout invalid_header updating
+                               http_500 http_502 http_503 http_504;
+        subs_filter_types text/html text/css text/xml;
+EOF
+for ip in $APACHE_LIST; 
+do
+    sudo echo "        subs_filter \"$ip\" \"$host\" gi;" >> /etc/nginx/conf.d/frontend.conf
+done
+sudo cat > /etc/nginx/conf.d/frontend.conf << EOF
+    }
+}
+EOF
+
+sudo systemctl restart nginx
+
+## Configuring firewall for incoming connections
+
+if [ "$(sudo firewall-cmd --state)" != "running" ]; then  
+   sudo systemctl start firewalld 
+fi
+sudo firewall-cmd --add-service=http --permanent
+sudo firewall-cmd --reload
+sudo systemctl restart firewalld 
+echo "Done."

@@ -1,0 +1,157 @@
+#!/bin/bash
+NETWORK="192.168.200.0"
+NETMASK="255.255.255.0"
+IPADDR="192.168.200.2"
+VBOXIP="192.168.56.4"
+config="/etc/httpd/conf.d/secondserver.conf"
+APACHE_LIST="192.168.200.5 192.168.56.5 $VBOXIP $IPADDR"
+servernamelist="$IPADDR $VBOXIP domain.example.com"
+
+databasehost="192.168.200.4"
+databasename="database_name_here"
+wpdatabaseuser="username_here"
+wpdbpasswd="password_here"
+
+gluster_dev="/dev/sdb"
+gluster_vg="vg_gluster"
+gluster_peers_list="192.168.200.5 192.168.200.4"
+## Configuring network interfaces ##
+
+sudo cat > /etc/sysconfig/network-scripts/ifcfg-enp0s9 << EOF
+TYPE="Ethernet"
+BOOTPROTO="none"
+NAME="enp0s9"
+DEVICE="enp0s9"
+ONBOOT="yes"
+DNS1=8.8.8.8
+DNS2=4.4.8.8
+DEFROUTE="yes"
+EOF 
+sudo echo "NETWORK=$NETWORK" >> /etc/sysconfig/network-scripts/ifcfg-enp0s9
+sudo echo "NETMASK=$NETMASK" >> /etc/sysconfig/network-scripts/ifcfg-enp0s9
+sudo echo "IPADDR=$IPADDR" >> /etc/sysconfig/network-scripts/ifcfg-enp0s9
+sudo echo "UUID=\"$(uuidgen)\"" >> /etc/sysconfig/network-scripts/ifcfg-enp0s9
+
+sudo cat > /etc/sysconfig/network-scripts/ifcfg-enp0s8 << EOF
+TYPE="Ethernet"
+BOOTPROTO="none"
+NAME="enp0s8"
+DEVICE="enp0s8"
+ONBOOT="yes"
+NETWORK=192.168.56.0
+NETMASK=255.255.255.0
+EOF
+sudo echo "IPADDR=$VBOXIP" >> /etc/sysconfig/network-scripts/ifcfg-enp0s8
+sudo echo "UUID=\"$(uuidgen)\"" >> /etc/sysconfig/network-scripts/ifcfg-enp0s8
+
+sudo systemctl restart network
+
+## Installing Apache2 web server, PHP and needing tools for further steps ##
+
+sudo yum -y install vim net-tools nmap wget rsync 
+sudo yum -y install httpd httpd-devel libxml2-devel mod_proxy_html.x86_64
+sudo yum -y php php-cli php-mysql* php-fpm php-dba php-common php-gd php-xml php-mbstring
+
+## Installing WordPress
+cd ~
+wget https://wordpress.org/latest.tar.gz
+tar -xzvf latest.tar.gz
+cd wordpress/
+cp wp-config-sample.php wp-config.php
+sudo rsync -avP ~/wordpress/ /var/www/html/
+mkdir /var/www/html/wp-content/uploads
+sudo chown -R apache:apache /var/www/html/*
+
+## Configuring WordPress
+
+cd /var/www/html
+sudo -u apache sed -i "s/\\(define('DB_NAME', '\\).*\\(');\\)/\\1$databasename\\2/" wp-config.php
+sudo -u apache sed -i "s/\\(define('DB_USER', '\\).*\\(');\\)/\\1$wpdatabaseuser\\2/" wp-config.php
+sudo -u apache sed -i "s/\\(define('DB_PASSWORD', '\\).*\\(');\)/\\1$wpdbpasswd\\2/" wp-config.php
+sudo -u apache sed -i "s/\\(define('DB_HOST', '\\).*\\(');\\)/\\1$databasehost\\2/" wp-config.php
+sudo -u apache echo  "define('WP_SITEURL', 'http://' . \\$_SERVER['HTTP_HOST']);" >> wp-config.php
+sudo -u apache echo  "define('WP_HOME', 'http://' . \\$_SERVER['HTTP_HOST']);" >> wp-config.php
+
+
+## Configuring apache 
+sudo sed -i "s|\\(Listen 80\\)|#\\1\\nListen 0.0.0.0:80|" /etc/httpd/conf/httpd.conf
+sudo sed -i "s|LoadModule deflate_module modules/mod_deflate.so|#&|"
+sudo cat > $config << EOF
+<VirtualHost *:*>
+  <files wp-config.php>
+    order allow,deny
+    deny from all
+  </files>
+</VirtualHost>
+
+EOF
+
+for host in $servernamelist; 
+do
+    sudo echo "<VirtualHost $host:*>" >> $config
+    sudo echo "  AddOutputFilterByType SUBSTITUTE text/html"  >> $config
+    for apache in $APACHE_LIST; 
+    do
+	if [ "$apache" != "$host" ]; then
+            sudo echo "  Substitute \"s|http://$apache/|http://$host/|ni\"" >> $config
+	fi
+    done
+    sudo echo "</VirtualHost>" >> $config
+    sudo echo "" >> $config
+done
+
+sudo systemctl restart httpd
+sudo systemctl enable httpd
+sudo firewall-cmd --add-service=http --permanent
+sudo firewall-cmd --reload
+sudo setsebool -P httpd_can_network_connect=1
+sudo setsebool -P httpd_can_network_connect_db=1
+
+## Installing and configuring cluster file system GlusterFS
+
+sudo wget -P /etc/yum.repos.d/ http://download.gluster.org/pub/gluster/glusterfs/LATEST/CentOS/glusterfs-epel.repo
+sudo yum -y install http://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm
+sudo yum -y install glusterfs-server glusterfs glusterfs-fuse attr
+sudo pvcreate $gluster_dev
+sudo vgcreate $gluster_vg $gluster_dev
+sudo lvcreate -L 2G -n brick1 $gluster_vg
+sudo mkdir -p /bricks/brick1
+sudo mkfs.btrfs /dev/mapper/$gluster_vg-brick1
+sudo echo "/dev/mapper/$gluster_vg-brick1 /bricks/brick1 btrfs    defaults        1 2" >> /etc/fstab
+sudo mount -a
+sudo systemctl enable glusterd.service
+sudo systemctl start glusterd.service
+sudo firewall-cmd --new-service=glusterfs --permanent
+sudo head -n 1 /etc/firewalld/services/glusterfs.xml > /etc/firewalld/services/glusterfs.xml
+sudo cat > /etc/firewalld/services/glusterfs.xml << EOF
+<service>
+<short>glusterfs</short>
+  <port protocol="tcp" port="24007-24007"/>
+  <port protocol="tcp" port="49152-49155"/>
+  <port protocol="tcp" port="38465-38467"/>
+  <port protocol="tcp" port="111"/>
+  <port protocol="udp" port="111"/>
+  <port protocol="tcp" port="2049"/>
+</service>
+EOF
+sudo firewall-cmd --zone=public --add-service=nfs --permanent
+sudo firewall-cmd --zone=public --add-service=glusterfs --permanent
+sudo firewall-cmd --reload
+
+sudo setsebool -P httpd_use_nfs=1
+
+peerbricks="$IPADDR:/bricks/brick1/brick "
+i=1
+if [ "$1" == "gluster-peers" ]; then
+	for peer in $gluster_peers_list; do
+	    sudo gluster peer probe $peer
+	    i+=1
+	    peerbricks+="$peer:/bricks/brick1/brick "
+	done 
+	sudo mkdir /bricks/brick1/brick
+	sudo gluster volume create gvol1 replica $i transport tcp $peerbricks
+	sudo gluster volume start gvol1
+	echo "$IPADDR:/gvol1       /var/www/html/wp-content/uploads glusterfs  rw,defaults,_netdev  1  2" >> /etc/fstab
+	sudo mount -a
+fi
+echo "Done."
