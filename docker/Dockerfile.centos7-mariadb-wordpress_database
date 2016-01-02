@@ -1,0 +1,15 @@
+FROM dolv/centos7-mariadb:latest
+MAINTAINER Oleksandr DUDCHENKO <ovdudchenko@gmail.com>
+RUN /etc/init.d/mysql start && \
+    rootpass="dbpass" && \
+	wordpressdatabasename="wpdb" && \
+    wordpressusername="wpuser" && \
+	wordpressuserpassword="wppass" && \
+    mysql -u root -p$rootpass -e "CREATE DATABASE IF NOT EXISTS $wordpressdatabasename;" && \
+    mysql -u root -p$rootpass -e "GRANT ALL PRIVILEGES ON $wordpressdatabasename.* TO '$wordpressusername'@'%' IDENTIFIED BY '$wordpressuserpassword';" && \
+    mysql -u root -p$rootpass -e "FLUSH PRIVILEGES;" && \
+	/etc/init.d/mysql stop 
+VOLUME $DATADIR/$wordpressdatabasename
+CMD ["/usr/bin/mysqld_safe"]
+
+EXPOSE 3306
