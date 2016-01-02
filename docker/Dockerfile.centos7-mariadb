@@ -1,0 +1,28 @@
+FROM centos:7
+MAINTAINER Oleksandr DUDCHENKO <ovdudchenko@gmail.com>
+ENV TERM xterm
+RUN echo "[mariadb]" > /etc/yum.repos.d/MariaDB.repo && \
+    echo "name = MariaDB" >> /etc/yum.repos.d/MariaDB.repo && \
+    echo "baseurl = http://yum.mariadb.org/10.1/centos7-amd64" >> /etc/yum.repos.d/MariaDB.repo && \
+    echo "gpgkey=https://yum.mariadb.org/RPM-GPG-KEY-MariaDB" >> /etc/yum.repos.d/MariaDB.repo && \
+    echo "gpgcheck=1" >> /etc/yum.repos.d/MariaDB.repo
+RUN yum update && yum install -y vim net-tools nmap wget curl mc rsync yum-utils expect
+RUN yum install -y mariadb mariadb-server
+RUN mysql_install_db --user=mysql
+RUN /etc/init.d/mysql start && \
+    rootpass="dbpass" && \
+	mysqladmin -u root password $rootpass && \
+    mysql -u root -p$rootpass -e "DELETE FROM mysql.user WHERE User='';" && \
+    mysql -u root -p$rootpass -e "DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1');" && \
+    mysql -u root -p$rootpass -e "DROP DATABASE test;" && \
+    mysql -u root -p$rootpass -e "DELETE FROM mysql.db WHERE Db='test' OR Db='test\\_%';" && \
+    mysql -u root -p$rootpass -e "GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' IDENTIFIED BY '$rootpass' WITH GRANT OPTION;" && \
+    mysql -u root -p$rootpass -e "FLUSH PRIVILEGES;" && \
+    /etc/init.d/mysql stop 
+RUN yum clean all && rm -rf /var/cache/yum
+RUN mkdir -p --mode=0755 /var/cache/yum
+VOLUME /var/lib/mysql
+WORKDIR /var/lib/mysql
+CMD ["/usr/bin/mysqld_safe"]
+
+EXPOSE 3306
