@@ -75,7 +75,7 @@ sudo -u apache echo  "define('WP_HOME', 'http://' . \\$_SERVER['HTTP_HOST']);" >
 
 ## Configuring apache 
 sudo sed -i "s|\\(Listen 80\\)|#\\1\\nListen 0.0.0.0:80|" /etc/httpd/conf/httpd.conf
-sudo sed -i "s|LoadModule deflate_module modules/mod_deflate.so|#&|"
+sudo sed -i "s|LoadModule deflate_module modules/mod_deflate.so|#&|" /etc/httpd/conf.modules.d/00-base.conf
 sudo cat > $config << EOF
 <VirtualHost *:*>
   <files wp-config.php>
