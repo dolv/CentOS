@@ -1,0 +1,16 @@
+FROM centos:7
+MAINTAINER Oleksandr DUDCHENKO <ovdudchenko@gmail.com>
+ENV TERM xterm
+RUN yum update && yum install -y vim net-tools nmap wget curl mc rsync yum-utils less 
+RUN yum install -y httpd httpd-devel libxml2-devel mod_proxy_html.x86_64
+RUN yum clean all && rm -rf /var/cache/yum
+RUN mkdir -p --mode=0755 /var/cache/yum
+VOLUME /var/www/html
+WORKDIR /var/www/html
+EXPOSE 80
+
+# Simple startup script to avoid some issues observed with container restart 
+COPY run-httpd.sh /run-httpd.sh
+RUN chmod -v +x /run-httpd.sh
+
+CMD ["/run-httpd.sh"]
