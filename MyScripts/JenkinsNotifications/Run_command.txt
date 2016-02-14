@@ -1,0 +1,1 @@
+ sudo -u jenkins find . -maxdepth 2  -name config.xml -exec ./set_notification_2_6.py {} 48 \;

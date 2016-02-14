@@ -82,6 +82,15 @@ sudo cat > $config << EOF
     order allow,deny
     deny from all
   </files>
+  <Proxy "*">
+    Require ip 192.168.
+  </Proxy>
+  #ProxyPassMatch ^/(.*)$ fcgi://127.0.0.1:9000/var/www/html/$1
+  <FilesMatch "/.*$">
+      # Note: The only part that varies is /path/to/app.sock
+      SetHandler  "unix:/var/run/php5-fpm.sock|fcgi://localhost:9000/"
+  </FilesMatch>
+  DirectoryIndex /index.php index.php index.html
 </VirtualHost>
 
 EOF

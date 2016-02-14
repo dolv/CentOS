@@ -1,0 +1,23 @@
+import hudson.model.*
+
+printf("[%s] Starting Sonar tests flow\n", new Date())
+import hudson.model.*
+import hudson.AbortException
+import hudson.console.HyperlinkNote
+import java.util.concurrent.CancellationException
+
+// Start sonar job
+def job = Hudson.instance.getJob('01.3_POS_backOfficeSonar_BuildBreaker')
+def sonarBuild
+try {
+    def future = job.scheduleBuild2(0, new Cause.UpstreamCause(build))
+    println "Waiting for the completion of " + HyperlinkNote.encodeTo('/' + job.url, job.fullDisplayName)
+    sonarBuild = future.get()
+} catch (CancellationException x) {
+    throw new AbortException("${job.fullDisplayName} aborted.")
+}
+println HyperlinkNote.encodeTo('/' + sonarBuild.url, sonarBuild.fullDisplayName) + " completed. Result was " + sonarBuild.result
+
+// Check that it succeeded
+//build.result = Result.SUCCESS
+build.result = sonarBuild.result
