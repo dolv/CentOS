@@ -25,4 +25,4 @@ optional arguments:
                         jenkins home folder.
   -j JOB, --job JOB     jenkins job name. Is used in conjunction to --jenkins_home.
                         If -j specified but -lf ommited the script will operate on the config.xml 
-						file of the specified job.
+                        file of the specified job.
