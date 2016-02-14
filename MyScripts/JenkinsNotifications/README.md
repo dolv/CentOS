@@ -1,8 +1,8 @@
-usage: set_notification_2_6_.py [-h] [-f CONFIGFILE] [-l] [-lf LF]
+usage: **set_notification_2_6_.py** [-h] [-f CONFIGFILE] [-l] [-lf LF]
                                 [-H JENKINS_HOME] [-j JOB]
                                 BitMask
 
-This script sets bits for Slak notification plugin configuration of jenkins job config.xml file
+**This script sets bits for Slak notification plugin configuration of jenkins job config.xml file**
 
 positional arguments:
   BitMask               BitMask is a integer number which equals to sum of the following values:
